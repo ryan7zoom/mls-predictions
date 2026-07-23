@@ -179,6 +179,12 @@ def get_match_stats(event_id):
     if "home" not in result or "away" not in result:
         return None
 
+    if os.environ.get("PREDICT_DEBUG") and not getattr(get_match_stats, "_dumped", False):
+        get_match_stats._dumped = True
+        print(f"[DEBUG] Raw stat keys from event {event_id}:")
+        print(f"  home keys: {sorted(result['home'].keys())}")
+        print(f"  away keys: {sorted(result['away'].keys())}")
+
     return result
 
 
@@ -1260,6 +1266,13 @@ def process_match(match, ratings_lookup):
 
     home_xg, away_xg = expected_goals(home_ratings, away_ratings)
     home_cx, away_cx = expected_corners(home_ratings, away_ratings)
+
+    if os.environ.get("PREDICT_DEBUG"):
+        print(f"\n[DEBUG] {match['home_team_name']} vs {match['away_team_name']}")
+        print(f"  home_ratings: {home_ratings}")
+        print(f"  away_ratings: {away_ratings}")
+        print(f"  home_xg={home_xg:.3f} away_xg={away_xg:.3f} (combined={home_xg+away_xg:.3f})")
+        print(f"  home_cx={home_cx:.3f} away_cx={away_cx:.3f}")
 
     goals_grid = build_goals_grid(home_xg, away_xg)
     corners_grid = build_corners_grid(home_cx, away_cx)
