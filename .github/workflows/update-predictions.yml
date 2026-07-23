@@ -1,21 +1,13 @@
-name: Update MLS Predictions
+name: update-predictions
 
-# Runs automatically once a day, or manually anytime from the Actions tab
 on:
   schedule:
-    # Runs at 09:00 UTC every day. Adjust the cron value if you want a
-    # different time - this is a common "morning" slot before match previews matter.
-    - cron: '0 9 * * *'
-  workflow_dispatch: {}  # this adds the "Run workflow" manual button in the Actions tab
-
-# Needed so this workflow is allowed to push the generated docs/index.html back to the repo
-permissions:
-  contents: write
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
 
 jobs:
   update-predictions:
     runs-on: ubuntu-latest
-
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -23,15 +15,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Run prediction script
         run: python predict.py
+        env:
+          PREDICT_DEBUG: "1"
 
       - name: Commit and push updated predictions
         run: |
-          git config --local user.name "github-actions[bot]"
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           git add docs/index.html
-          git diff --staged --quiet && echo "No changes to commit" || git commit -m "Update MLS predictions ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update predictions"
           git push
