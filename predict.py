@@ -94,9 +94,13 @@ def get_completed_matches(days_back=90):
     of events instead of the full window, with no error or warning. This
     corrupts every downstream rating with a thin, arbitrary sample.
 
-    To get a complete dataset we instead pull the league's own calendar
-    (list of actual matchdays, given back by the scoreboard endpoint
-    itself) and fetch each matchday individually, merging results.
+    IMPORTANT #2: each entry in ESPN's calendar list is not a full slate -
+    an MLS "matchday" often spans Fri/Sat/Sun, but the calendar only lists
+    one representative date per round, and dates=YYYYMMDD only returns
+    games kicking off on that exact day. Fetching just that single day
+    per calendar entry silently drops the other games in the same round.
+    To catch the full round we fetch a small window (+/- 2 days) around
+    each calendar date and rely on event-id dedup to avoid double counting.
     """
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=days_back)
@@ -115,15 +119,28 @@ def get_completed_matches(days_back=90):
             except (ValueError, TypeError):
                 continue
             if start_date <= d <= end_date:
-                calendar_dates.append(d.strftime("%Y%m%d"))
+                calendar_dates.append(d)
 
     if not calendar_dates:
         print("WARNING: no matchdays found in league calendar for the requested window")
         return []
 
+    # Expand each calendar date into a +/- 2 day window, then flatten to a
+    # deduped, sorted set of individual days to actually query - this
+    # collapses overlapping windows from adjacent calendar entries into
+    # single fetches instead of re-querying the same day repeatedly.
+    WINDOW_DAYS = 2
+    query_days = set()
+    for d in calendar_dates:
+        for offset in range(-WINDOW_DAYS, WINDOW_DAYS + 1):
+            day = d + timedelta(days=offset)
+            if start_date <= day <= end_date:
+                query_days.add(day.strftime("%Y%m%d"))
+    query_days = sorted(query_days)
+
     matches = []
     seen_event_ids = set()
-    for i, date_str in enumerate(calendar_dates):
+    for i, date_str in enumerate(query_days):
         url = SCOREBOARD_DATE_URL.format(date=date_str)
         data = _fetch_json(url)
         if not data:
@@ -149,7 +166,7 @@ def get_completed_matches(days_back=90):
                 "home_score": home.get("score"),
                 "away_score": away.get("score"),
             })
-        if i < len(calendar_dates) - 1:
+        if i < len(query_days) - 1:
             time.sleep(REQUEST_DELAY_SECONDS)
 
     return matches
