@@ -140,11 +140,15 @@ def get_completed_matches(days_back=90):
 
     matches = []
     seen_event_ids = set()
+    per_day_counts = {}
     for i, date_str in enumerate(query_days):
         url = SCOREBOARD_DATE_URL.format(date=date_str)
         data = _fetch_json(url)
         if not data:
+            per_day_counts[date_str] = "FETCH_FAILED"
             continue
+        day_new_count = 0
+        day_total_events = len(data.get("events", []))
         for event in data.get("events", []):
             event_id = event.get("id")
             if event_id in seen_event_ids:
@@ -156,6 +160,7 @@ def get_completed_matches(days_back=90):
             home = next((c for c in competitors if c.get("homeAway") == "home"), {})
             away = next((c for c in competitors if c.get("homeAway") == "away"), {})
             seen_event_ids.add(event_id)
+            day_new_count += 1
             matches.append({
                 "event_id": event_id,
                 "date": event.get("date"),
@@ -166,8 +171,14 @@ def get_completed_matches(days_back=90):
                 "home_score": home.get("score"),
                 "away_score": away.get("score"),
             })
+        per_day_counts[date_str] = f"{day_new_count} new / {day_total_events} total events"
         if i < len(query_days) - 1:
             time.sleep(REQUEST_DELAY_SECONDS)
+
+    if os.environ.get("PREDICT_DEBUG"):
+        print(f"[DEBUG] calendar_dates found: {len(calendar_dates)}, query_days expanded to: {len(query_days)}")
+        for ds, count in per_day_counts.items():
+            print(f"[DEBUG]   {ds}: {count}")
 
     return matches
 
@@ -993,7 +1004,12 @@ def build_html(matches_with_builders):
             "alternates": [...]
         }
     """
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_utc = datetime.now(timezone.utc)
+    now_gmt6 = now_utc.astimezone(timezone(timedelta(hours=6)))
+    generated_at = (
+        f"{now_utc.strftime('%Y-%m-%d %H:%M UTC')} "
+        f"({now_gmt6.strftime('%Y-%m-%d %H:%M')} GMT+6)"
+    )
 
     bet_builder_cards = "".join(
         _bet_builder_card_html(m["match"], m["best_builder"], m["alternates"])
