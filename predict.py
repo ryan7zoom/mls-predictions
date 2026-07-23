@@ -86,42 +86,72 @@ def get_upcoming_matches():
 
 def get_completed_matches(days_back=90):
     """
-    Pulls completed matches over the last `days_back` days by querying the
-    scoreboard endpoint date-by-date range (ESPN's scoreboard defaults to
-    'this week' unless a date range is passed).
+    Pulls completed matches over the last `days_back` days.
 
-    Returns list of {event_id, date, home_team_id, away_team_id} for
-    completed (status='post') games only.
+    IMPORTANT: ESPN's scoreboard endpoint does NOT reliably return every
+    event in a wide dates=START-END range in one response - in testing,
+    a 90-day range silently came back with only a single matchday's worth
+    of events instead of the full window, with no error or warning. This
+    corrupts every downstream rating with a thin, arbitrary sample.
+
+    To get a complete dataset we instead pull the league's own calendar
+    (list of actual matchdays, given back by the scoreboard endpoint
+    itself) and fetch each matchday individually, merging results.
     """
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=days_back)
 
-    # ESPN accepts a dates param like YYYYMMDD-YYYYMMDD for a range
-    date_range = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
-    url = SCOREBOARD_DATE_URL.format(date=date_range)
+    # First hit the plain scoreboard endpoint to read the league calendar -
+    # the list of dates on which matches were actually played this season.
+    base_data = _fetch_json(SCOREBOARD_URL)
+    if not base_data:
+        return []
 
-    data = _fetch_json(url)
-    if not data:
+    calendar_dates = []
+    for league in base_data.get("leagues", []):
+        for date_str in league.get("calendar", []):
+            try:
+                d = datetime.fromisoformat(date_str.replace("Z", "+00:00")).replace(tzinfo=None)
+            except (ValueError, TypeError):
+                continue
+            if start_date <= d <= end_date:
+                calendar_dates.append(d.strftime("%Y%m%d"))
+
+    if not calendar_dates:
+        print("WARNING: no matchdays found in league calendar for the requested window")
         return []
 
     matches = []
-    for event in data.get("events", []):
-        status = event.get("status", {}).get("type", {}).get("state", "")
-        if status != "post":
+    seen_event_ids = set()
+    for i, date_str in enumerate(calendar_dates):
+        url = SCOREBOARD_DATE_URL.format(date=date_str)
+        data = _fetch_json(url)
+        if not data:
             continue
-        competitors = event.get("competitions", [{}])[0].get("competitors", [])
-        home = next((c for c in competitors if c.get("homeAway") == "home"), {})
-        away = next((c for c in competitors if c.get("homeAway") == "away"), {})
-        matches.append({
-            "event_id": event.get("id"),
-            "date": event.get("date"),
-            "home_team_id": home.get("team", {}).get("id"),
-            "home_team_name": home.get("team", {}).get("displayName"),
-            "away_team_id": away.get("team", {}).get("id"),
-            "away_team_name": away.get("team", {}).get("displayName"),
-            "home_score": home.get("score"),
-            "away_score": away.get("score"),
-        })
+        for event in data.get("events", []):
+            event_id = event.get("id")
+            if event_id in seen_event_ids:
+                continue
+            status = event.get("status", {}).get("type", {}).get("state", "")
+            if status != "post":
+                continue
+            competitors = event.get("competitions", [{}])[0].get("competitors", [])
+            home = next((c for c in competitors if c.get("homeAway") == "home"), {})
+            away = next((c for c in competitors if c.get("homeAway") == "away"), {})
+            seen_event_ids.add(event_id)
+            matches.append({
+                "event_id": event_id,
+                "date": event.get("date"),
+                "home_team_id": home.get("team", {}).get("id"),
+                "home_team_name": home.get("team", {}).get("displayName"),
+                "away_team_id": away.get("team", {}).get("id"),
+                "away_team_name": away.get("team", {}).get("displayName"),
+                "home_score": home.get("score"),
+                "away_score": away.get("score"),
+            })
+        if i < len(calendar_dates) - 1:
+            time.sleep(REQUEST_DELAY_SECONDS)
+
     return matches
 
 
